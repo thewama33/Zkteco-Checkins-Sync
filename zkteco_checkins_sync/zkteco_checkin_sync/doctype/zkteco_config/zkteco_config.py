@@ -206,7 +206,8 @@ def sync_zkteco_transactions():
     
     try:
         # Get transactions from last sync or last hour
-        last_sync = frappe.db.get_single_value("ZKTeco Config", "last_sync") or (now_datetime() - timedelta(hours=1))
+        last_sync_val = frappe.db.get_single_value("ZKTeco Config", "last_sync")
+        last_sync = get_datetime(last_sync_val) if last_sync_val else (now_datetime() - timedelta(hours=1))
         current_time = now_datetime()
         
         transactions = fetch_zkteco_transactions(cfg, last_sync, current_time)
@@ -388,44 +389,29 @@ def manual_sync():
 
 def scheduled_sync():
     """
-    Scheduled sync function that respects the frequency setting
+    Scheduled sync function that respects the configured frequency.
+    Called every minute by the scheduler; skips execution when the
+    configured interval has not yet elapsed.
     """
     try:
         cfg = frappe.get_single("ZKTeco Config")
-        if not cfg.enable_sync:
+        if not cfg.enable_sync or not cfg.token:
             return
-            
-        # For frequent syncs (less than 60 seconds), check if we should actually run
+
         sync_seconds = int(cfg.seconds or 300)
-        if sync_seconds < 60:
-            last_run = frappe.cache().get_value("zkteco_last_sync_run")
-            current_time = now_datetime()
-            
-            if last_run:
-                time_diff = (current_time - get_datetime(last_run)).total_seconds()
-                if time_diff < sync_seconds:
-                    return  # Not yet time for next sync
-            
-            # Update last run time
-            frappe.cache().set_value("zkteco_last_sync_run", current_time)
-        
+        current_time = now_datetime()
+
+        last_run = frappe.cache().get_value("zkteco_last_sync_run")
+        if last_run:
+            time_diff = (current_time - get_datetime(last_run)).total_seconds()
+            if time_diff < sync_seconds:
+                return  # Not yet time for next sync
+
+        frappe.cache().set_value("zkteco_last_sync_run", current_time)
         sync_zkteco_transactions()
-        
+
     except Exception as e:
         frappe.log_error(f"Scheduled ZKTeco sync failed: {str(e)}", "ZKTeco Scheduled Sync Error")
-
-
-def cleanup_scheduler_check():
-    """
-    Cleanup function to ensure scheduler is working properly
-    """
-    try:
-        cfg = frappe.get_single("ZKTeco Config")
-        if cfg.enable_sync:
-            # Log that the scheduler is active
-            frappe.logger().info("ZKTeco scheduler check: Active")
-    except Exception as e:
-        frappe.log_error(f"ZKTeco scheduler check failed: {str(e)}", "ZKTeco Scheduler Check")
 
 
 @frappe.whitelist()

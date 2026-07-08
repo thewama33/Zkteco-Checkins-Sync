@@ -32,7 +32,7 @@
    "label": "Enable Sync"
   },
   {
-   "depends_on": "eval: doc.enable_sync === 1;",
+   "depends_on": "eval: doc.enable_sync == 1",
    "fieldname": "section_break_dakd",
    "fieldtype": "Section Break",
    "label": "ZKTeco Superuser Credentials"
@@ -41,16 +41,16 @@
    "fieldname": "username",
    "fieldtype": "Data",
    "label": "Username",
-   "mandatory_depends_on": "eval: doc.enable_sync === 1;"
+   "mandatory_depends_on": "eval: doc.enable_sync == 1"
   },
   {
    "fieldname": "password",
    "fieldtype": "Password",
    "label": "Password",
-   "mandatory_depends_on": "eval: doc.enable_sync === 1;"
+   "mandatory_depends_on": "eval: doc.enable_sync == 1"
   },
   {
-   "depends_on": "eval: doc.enable_sync === 1;",
+   "depends_on": "eval: doc.enable_sync == 1",
    "fieldname": "zkteco_api_credentials_section",
    "fieldtype": "Section Break",
    "label": "ZKTeco API Credentials"
@@ -66,7 +66,7 @@
    "fieldname": "server_ip",
    "fieldtype": "Data",
    "label": "Server IP",
-   "mandatory_depends_on": "eval: doc.enable_sync === 1;"
+   "mandatory_depends_on": "eval: doc.enable_sync == 1"
   },
   {
    "default": "80",
@@ -74,10 +74,10 @@
    "fieldname": "server_port",
    "fieldtype": "Data",
    "label": "Server Port",
-   "mandatory_depends_on": "eval: doc.enable_sync === 1;"
+   "mandatory_depends_on": "eval: doc.enable_sync == 1"
   },
   {
-   "depends_on": "eval: doc.enable_sync === 1;",
+   "depends_on": "eval: doc.enable_sync == 1",
    "fieldname": "zkteco_sync_setup_section",
    "fieldtype": "Section Break",
    "label": "ZKTeco Sync Setup"
@@ -89,7 +89,7 @@
    "fieldtype": "Select",
    "label": "Sync Frequency",
    "options": "10\n30\n60\n120\n300\n600\n900\n1800\n3600",
-   "mandatory_depends_on": "eval: doc.enable_sync === 1;"
+   "mandatory_depends_on": "eval: doc.enable_sync == 1"
   },
   {
    "depends_on": "eval:doc.server_ip && doc.server_port",
@@ -113,7 +113,7 @@
   },
   {
    "collapsible": 1,
-   "depends_on": "eval: doc.enable_sync === 1;",
+   "depends_on": "eval: doc.enable_sync == 1",
    "fieldname": "sync_status_section",
    "fieldtype": "Section Break",
    "label": "Sync Status & Statistics"
