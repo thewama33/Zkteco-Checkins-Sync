@@ -12,6 +12,7 @@
   "zkteco_api_credentials_section",
   "server_ip",
   "server_port",
+  "use_https",
   "column_break_whif",
   "register_api_token",
   "token",
@@ -62,19 +63,26 @@
    "read_only": 1
   },
   {
-   "description": "IP address of the ZKBio Time server ipv4",
+   "description": "IP address or hostname of the ZKBio Time server (e.g. 192.168.1.45 or zkbiotime.example.com)",
    "fieldname": "server_ip",
    "fieldtype": "Data",
-   "label": "Server IP",
+   "label": "Server Host",
    "mandatory_depends_on": "eval: doc.enable_sync == 1"
   },
   {
    "default": "80",
-   "description": "Can be found while installing the ZKBio Time",
+   "description": "Can be found while installing the ZKBio Time (use 443 for HTTPS)",
    "fieldname": "server_port",
    "fieldtype": "Data",
    "label": "Server Port",
    "mandatory_depends_on": "eval: doc.enable_sync == 1"
+  },
+  {
+   "default": "0",
+   "description": "Enable for cloud-hosted or SSL-secured ZKBio Time servers",
+   "fieldname": "use_https",
+   "fieldtype": "Check",
+   "label": "Use HTTPS"
   },
   {
    "depends_on": "eval: doc.enable_sync == 1",

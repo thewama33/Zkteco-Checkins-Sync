@@ -5,13 +5,46 @@ import frappe
 from frappe.model.document import Document
 from frappe import _
 import requests
-from frappe.utils import today, now_datetime, get_datetime, flt
-from datetime import datetime, timedelta
-import json
+from frappe.utils import today, now_datetime, get_datetime
+from datetime import timedelta
 
 
 class ZKTecoConfig(Document):
     pass
+
+
+def get_base_url():
+    """Build the base URL from ZKTeco Config settings."""
+    cfg = frappe.get_single("ZKTeco Config")
+    scheme = "https" if cfg.use_https else "http"
+    server_ip = cfg.server_ip
+    server_port = cfg.server_port
+
+    # Omit port for default HTTP/HTTPS ports
+    if (scheme == "https" and str(server_port) == "443") or (scheme == "http" and str(server_port) == "80"):
+        return f"{scheme}://{server_ip}"
+    return f"{scheme}://{server_ip}:{server_port}"
+
+
+def refresh_token():
+    """Re-authenticate with the ZKTeco server and save the new token."""
+    username = frappe.db.get_single_value("ZKTeco Config", "username")
+    password = frappe.utils.password.get_decrypted_password("ZKTeco Config", "ZKTeco Config", "password")
+    if not username or not password:
+        return None
+
+    url = f"{get_base_url()}/jwt-api-token-auth/"
+    try:
+        resp = requests.post(url, json={"username": username, "password": password},
+                             headers={"Content-Type": "application/json"}, timeout=15)
+        resp.raise_for_status()
+        token = resp.json().get("token")
+        if token:
+            frappe.db.set_single_value("ZKTeco Config", "token", token)
+            frappe.db.commit()
+        return token
+    except Exception:
+        return None
 
 
 @frappe.whitelist()
@@ -19,17 +52,13 @@ def register_api_token():
     """
     Calls the remote API to obtain a token and returns it to the client.
     """
-    # Fetch from Single DocType
-    server_ip = frappe.db.get_single_value("ZKTeco Config", "server_ip")
-    server_port = frappe.db.get_single_value("ZKTeco Config", "server_port")
     username = frappe.db.get_single_value("ZKTeco Config", "username")
-    password = frappe.db.get_single_value("ZKTeco Config", "password")
+    password = frappe.utils.password.get_decrypted_password("ZKTeco Config", "ZKTeco Config", "password")
 
-    if not all([server_ip, server_port, username, password]):
-        frappe.throw(_("Please configure server IP, port, username, and password in ZKTeco Config."))
+    if not all([username, password]):
+        frappe.throw(_("Please configure username and password in ZKTeco Config."))
 
-    # Ensure scheme + port in URL
-    url = f"http://{server_ip}:{server_port}/jwt-api-token-auth/"
+    url = f"{get_base_url()}/jwt-api-token-auth/"
 
     payload = {
         "username": username,
@@ -56,16 +85,13 @@ def test_connection():
     """
     Enhanced test connection that shows latest transactions with detailed info
     """
-    # Get token from the singleton config
     cfg = frappe.get_single("ZKTeco Config")
     token = (cfg.token or "").strip()
-    server_ip = frappe.db.get_single_value("ZKTeco Config", "server_ip")
-    server_port = frappe.db.get_single_value("ZKTeco Config", "server_port")
-    
+
     if not token:
         return {"ok": False, "error": _("Token not set in ZKTeco Config. Please register/save a token first.")}
 
-    base_url = f"http://{server_ip}:{server_port}/iclock/api/transactions/"
+    base_url = f"{get_base_url()}/iclock/api/transactions/"
     day = today()
     start_time = f"{day} 00:00:00"
     end_time = f"{day} 23:59:59"
@@ -137,7 +163,7 @@ def test_connection():
                         
                         # Determine log type based on punch_state
                         log_type = "IN"
-                        if punch_state == "1" or punch_state_display == "Check Out":
+                        if str(punch_state) == "1" or punch_state_display == "Check Out":
                             log_type = "OUT"
                         
                         formatted_transactions.append({
@@ -151,8 +177,7 @@ def test_connection():
                             "device_id": device_id,
                             "verify_method": verify_type_display,
                             "zkteco_name": zkteco_name,
-                            "department": transaction.get('department'),
-                            "raw_data": transaction
+                            "department": transaction.get('department')
                         })
                     except Exception as e:
                         frappe.log_error(f"Error processing transaction: {e}", "ZKTeco Transaction Processing")
@@ -164,16 +189,14 @@ def test_connection():
                     "url": resp.url,
                     "total_transactions": transaction_count,
                     "transactions_preview": formatted_transactions,
-                    "raw_sample": transactions[:2] if transactions else [],
                     "message": f"Found {transaction_count} transactions for {day}"
                 }
                 
-            except json.JSONDecodeError as e:
+            except ValueError as e:
                 return {
                     "ok": False,
                     "status_code": resp.status_code,
                     "error": f"Invalid JSON response: {str(e)}",
-                    "raw_response": resp.text[:500]
                 }
         else:
             return {
@@ -196,12 +219,7 @@ def sync_zkteco_transactions():
     """
     # Check if sync is enabled
     cfg = frappe.get_single("ZKTeco Config")
-    if not cfg.enable_sync:
-        frappe.log_error("ZKTeco sync is disabled", "ZKTeco Sync")
-        return
-    
-    if not cfg.token:
-        frappe.log_error("ZKTeco token not configured", "ZKTeco Sync")
+    if not cfg.enable_sync or not cfg.token:
         return
     
     try:
@@ -211,28 +229,26 @@ def sync_zkteco_transactions():
         current_time = now_datetime()
         
         transactions = fetch_zkteco_transactions(cfg, last_sync, current_time)
-        
-        if transactions:
-            processed_count = 0
-            error_count = 0
-            
-            for transaction in transactions:
-                try:
-                    if create_employee_checkin(transaction):
-                        processed_count += 1
-                    else:
-                        error_count += 1
-                except Exception as e:
+
+        processed_count = 0
+        error_count = 0
+
+        for transaction in transactions:
+            try:
+                if create_employee_checkin(transaction):
+                    processed_count += 1
+                else:
                     error_count += 1
-                    frappe.log_error(f"Error creating checkin for transaction {transaction}: {str(e)}", "ZKTeco Sync Error")
-            
-            # Update last sync time and record count
+            except Exception as e:
+                error_count += 1
+                frappe.log_error(f"Error creating checkin for transaction {transaction}: {str(e)}", "ZKTeco Sync Error")
+
+        # Always update last sync time so the UI shows the scheduler is active
+        frappe.db.set_single_value("ZKTeco Config", "last_sync", current_time)
+        if processed_count:
             total_synced = frappe.db.get_single_value("ZKTeco Config", "total_synced_records") or 0
-            frappe.db.set_single_value("ZKTeco Config", "last_sync", current_time)
             frappe.db.set_single_value("ZKTeco Config", "total_synced_records", total_synced + processed_count)
-            frappe.db.commit()
-            
-            frappe.logger().info(f"ZKTeco Sync completed: {processed_count} processed, {error_count} errors")
+        frappe.db.commit()
         
     except Exception as e:
         frappe.log_error(f"ZKTeco sync failed: {str(e)}", "ZKTeco Sync Fatal Error")
@@ -240,43 +256,65 @@ def sync_zkteco_transactions():
 
 def fetch_zkteco_transactions(cfg, start_time, end_time):
     """
-    Fetch transactions from ZKTeco device
+    Fetch transactions from ZKTeco device, following pagination.
     """
-    server_ip = cfg.server_ip
-    server_port = cfg.server_port
     token = cfg.token
-    
-    base_url = f"http://{server_ip}:{server_port}/iclock/api/transactions/"
-    
+
+    url = f"{get_base_url()}/iclock/api/transactions/"
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"JWT {token}",
     }
-    
+
     params = {
         "start_time": start_time.strftime("%Y-%m-%d %H:%M:%S"),
         "end_time": end_time.strftime("%Y-%m-%d %H:%M:%S"),
+        "page_size": 1000,
     }
-    
+
+    all_transactions = []
+
     try:
-        resp = requests.get(base_url, headers=headers, params=params, timeout=30)
-        resp.raise_for_status()
-        
-        data = resp.json()
-        
-        # Handle ZKTeco API response format
-        if isinstance(data, dict) and 'data' in data:
-            return data['data']
-        elif isinstance(data, dict) and 'results' in data:
-            return data['results']
-        elif isinstance(data, list):
-            return data
-        else:
-            return []
-            
+        while url:
+            resp = requests.get(url, headers=headers, params=params, timeout=60)
+
+            # Auto-refresh token on 401 Unauthorized and retry once
+            if resp.status_code == 401:
+                new_token = refresh_token()
+                if new_token:
+                    headers["Authorization"] = f"JWT {new_token}"
+                    resp = requests.get(url, headers=headers, params=params, timeout=60)
+
+            resp.raise_for_status()
+
+            data = resp.json()
+
+            # Extract transactions from response
+            if isinstance(data, dict) and 'data' in data:
+                all_transactions.extend(data['data'])
+                url = data.get('next')
+            elif isinstance(data, dict) and 'results' in data:
+                all_transactions.extend(data['results'])
+                url = data.get('next')
+            elif isinstance(data, list):
+                all_transactions.extend(data)
+                url = None
+            else:
+                url = None
+
+            # Fix: pagination URLs from API may use http; match our scheme
+            if url and cfg.use_https and url.startswith("http://"):
+                url = url.replace("http://", "https://", 1)
+
+            # Clear params after first request; pagination URL includes them
+            params = None
+
+        return all_transactions
+
     except Exception as e:
         frappe.log_error(f"Failed to fetch ZKTeco transactions: {str(e)}", "ZKTeco API Error")
-        return []
+        return all_transactions or []
 
 
 def create_employee_checkin(transaction):
@@ -298,7 +336,6 @@ def create_employee_checkin(transaction):
         # Find employee
         employee = find_employee_by_code(emp_code)
         if not employee:
-            frappe.log_error(f"Employee not found for code: {emp_code}", "ZKTeco Employee Mapping")
             return False
         
         # Convert punch_time to datetime
@@ -309,40 +346,27 @@ def create_employee_checkin(transaction):
         
         # Determine log type based on punch_state
         log_type = "IN"
-        if punch_state == "1":  # Based on API response: "1" = Check Out
+        if str(punch_state) == "1":  # Based on API response: "1" = Check Out
             log_type = "OUT"
         
-        # Check if checkin already exists (use transaction ID for uniqueness)
-        existing_checkin = frappe.db.exists("Employee Checkin", {
-            "employee": employee,
-            "time": punch_datetime,
-            "device_id": device_id
-        })
-        
-        if existing_checkin:
+        # Build unique device_id that includes the ZKTeco transaction ID
+        checkin_device_id = f"{device_id} (ZKTeco-{transaction_id})" if transaction_id else device_id or "ZKTeco Device"
+
+        # Check if checkin already exists
+        if frappe.db.exists("Employee Checkin", {"device_id": checkin_device_id}):
             return True  # Already processed
-        
-        # Also check by transaction ID if we store it
-        if transaction_id:
-            existing_by_id = frappe.db.get_value("Employee Checkin", 
-                                               {"device_id": device_id, "employee": employee}, 
-                                               "name", 
-                                               {"time": ["between", [punch_datetime - timedelta(seconds=5), punch_datetime + timedelta(seconds=5)]]})
-            if existing_by_id:
-                return True
-        
+
         # Create Employee Checkin
         checkin = frappe.get_doc({
             "doctype": "Employee Checkin",
             "employee": employee,
             "time": punch_datetime,
             "log_type": log_type,
-            "device_id": f"{device_id} (ZKTeco-{transaction_id})" if transaction_id else device_id or "ZKTeco Device",
-            "skip_auto_attendance": 0
+            "device_id": checkin_device_id,
+            "skip_auto_attendance": 0,
         })
-        
+
         checkin.insert(ignore_permissions=True)
-        frappe.db.commit()
         
         return True
         
