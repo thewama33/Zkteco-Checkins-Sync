@@ -29,7 +29,7 @@ def register_api_token():
         frappe.throw(_("Please configure server IP, port, username, and password in ZKTeco Config."))
 
     # Ensure scheme + port in URL
-    url = f"http://{server_ip}:{server_port}/api-token-auth/"
+    url = f"http://{server_ip}:{server_port}/jwt-api-token-auth/"
 
     payload = {
         "username": username,
@@ -37,7 +37,7 @@ def register_api_token():
     }
 
     try:
-        resp = requests.post(url, json=payload, timeout=15)
+        resp = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=15)
         resp.raise_for_status()
 
         data = resp.json()
@@ -72,7 +72,7 @@ def test_connection():
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"JWT {token}",
     }
     params = {
         "start_time": start_time,
@@ -250,7 +250,7 @@ def fetch_zkteco_transactions(cfg, start_time, end_time):
     
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"JWT {token}",
     }
     
     params = {
